@@ -48,25 +48,87 @@ kubectl create namespace n8n-sandbox
 kubectl label namespace n8n-sandbox pod-security.kubernetes.io/enforce=privileged
 ```
 
-## 2. Install the chart
+## 2. Create the auth Secret
+
+The chart reads four keys from one Secret. `runner-api-key` and
+`runner-api-keys` must hold the **same** value: the API presents the first when
+calling a runner, and the runner accepts the second.
+
+```bash
+RUNNER_KEY=$(openssl rand -hex 24)
+
+kubectl -n n8n-sandbox create secret generic sandbox-auth   --from-literal=api-keys="$(openssl rand -hex 24)"   --from-literal=runner-registration-token="$(openssl rand -hex 24)"   --from-literal=runner-api-key="$RUNNER_KEY"   --from-literal=runner-api-keys="$RUNNER_KEY"
+```
+
+The generated-secret path (`auth.generated.*`) works too, but puts the values
+in your Helm release. Prefer the Secret.
+
+## 3. Provide the mTLS certificates
+
+The API and runner authenticate to each other with mTLS, and the chart's
+default `tls.mode: existingSecret` expects four TLS Secrets that it does not
+create. Left unset, both pods sit in `ContainerCreating` waiting for volumes
+that never appear.
+
+The shortest working path is `tls.mode: certManager`, which renders all four
+`Certificate` resources for you. It needs an issuer. If you already run a CA
+`Issuer` or `ClusterIssuer`, use it and skip this. Otherwise bootstrap a
+self-signed one:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sandbox-selfsigned
+  namespace: n8n-sandbox
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sandbox-ca
+  namespace: n8n-sandbox
+spec:
+  isCA: true
+  commonName: n8n-sandbox-ca
+  secretName: sandbox-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: sandbox-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sandbox-ca
+  namespace: n8n-sandbox
+spec:
+  ca:
+    secretName: sandbox-ca
+EOF
+```
+
+See [cert-manager-k8s.md](./cert-manager-k8s.md) for what each of the four
+certificates is for, and for wiring an existing CA instead.
+
+## 4. Install the chart
 
 No node labels, no tolerations and no RuntimeClass are needed. Any node that can
 run a privileged pod can run this.
 
 ```bash
-helm install n8n-sandbox ./charts/n8n-sandbox-service \
-  --namespace n8n-sandbox \
-  --set dataPlane.mode=dind \
-  --set auth.existingSecret=sandbox-auth
+helm install n8n-sandbox ./charts/n8n-sandbox-service   --namespace n8n-sandbox   --set dataPlane.mode=dind   --set auth.existingSecret=sandbox-auth   --set tls.mode=certManager   --set tls.certManager.issuerRef.name=sandbox-ca   --set tls.certManager.issuerRef.kind=Issuer
 ```
 
 Configure the runner through the `dindRunner` block, which mirrors
 `sysboxRunner` field for field. See [configuration.md](./configuration.md).
 
-TLS between the API and the runner works exactly as in sysbox mode; see
-[cert-manager-k8s.md](./cert-manager-k8s.md).
-
-## 3. Verify
+## 5. Verify
 
 ```bash
 kubectl -n n8n-sandbox get pods
@@ -120,3 +182,16 @@ with `kubectl -n n8n-sandbox get pod <runner> -o jsonpath='{.spec.containers[0].
 
 **Runner pod stays `Pending`.** Usually a leftover sysbox `nodeSelector` or
 toleration. `dindRunner.scheduling` defaults to empty for exactly this reason.
+
+**Pods stuck in `ContainerCreating`.** Almost always a missing Secret, because
+the kubelet blocks on the volume rather than reporting a config error. Check
+which one:
+
+```bash
+kubectl -n n8n-sandbox describe pod <pod> | tail -20
+kubectl -n n8n-sandbox get secret
+```
+
+Expect `sandbox-auth` from step 2 and the four TLS Secrets from step 3. If the
+TLS ones are absent, cert-manager has not issued them: `kubectl -n n8n-sandbox
+get certificate` shows `READY: False` with the reason.
