@@ -16,9 +16,63 @@ helm upgrade --install n8n-sandbox-service ./charts/n8n-sandbox-service \
   --create-namespace
 ```
 
+## Upgrading to 0.3.0
+
+Two values keys lost their `sysbox` prefix, because they now cover the dind
+runner as well:
+
+| 0.2.4 | 0.3.0 |
+| --- | --- |
+| `networkPolicy.sysboxRunner.ingressFrom` | `networkPolicy.runner.ingressFrom` |
+| `monitoring.serviceMonitor.sysboxRunner.enabled` | `monitoring.serviceMonitor.runner.enabled` |
+
+The old names are rejected at render time rather than ignored, so an upgrade
+carrying either one fails with the rename instead of quietly changing what the
+chart does: a dropped `ingressFrom` would cost a NetworkPolicy its extra peers,
+and a dropped `enabled: false` would switch a deliberately disabled
+ServiceMonitor back on.
+
+This fires even where the key was inert, for instance with
+`networkPolicy.enabled: false` or `dataPlane.mode: external`. That is
+deliberate. The alternative is deferring the error to whichever later install
+first renders the resource, which surfaces a rename error about a line nobody
+touched in that change. The fix is the same one line either way.
+
 ## Data Plane Mode
 
-Use `dataPlane.mode: sysbox` for the in-cluster sysbox/DinD runner. Use `dataPlane.mode: external` when runners live outside Kubernetes. In external mode, the chart renders the API resources but does not render the sysbox runner StatefulSet.
+| Mode | Runner | Isolation from the node |
+| --- | --- | --- |
+| `sysbox` | in-cluster, `runtimeClassName: sysbox-runc` | user-namespaced by the sysbox runtime |
+| `dind` | in-cluster, privileged Docker-in-Docker | container capabilities only |
+| `external` | outside Kubernetes | n/a, only the API is rendered |
+
+Both in-cluster modes run the same runner image and share the whole config, TLS
+and service surface. They differ only in where the container gets the privileges
+to run an inner Docker daemon.
+
+`sysbox` is the default and the stronger of the two. Prefer it wherever the node
+runtime can be changed.
+
+`dind` exists for clusters where it cannot. The sysbox installer writes the
+host's containerd configuration, which an immutable-rootfs distribution such as
+Talos, Flatcar or Fedora CoreOS does not permit, so on those `sysbox` is not
+merely inconvenient but unavailable. The trade is worth stating plainly: a
+privileged container can see the node's cgroup tree, so `dind` suits a namespace
+running code you own and does not suit a shared or multi-tenant cluster.
+
+In `dind` mode the namespace must permit privileged pods. Pod Security Admission
+denies them by default, and the rejection appears as an event on the StatefulSet
+rather than as a failing pod, so the symptom is that no runner is ever created:
+
+```bash
+kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=privileged
+```
+
+Configure the active mode through its own values block, `sysboxRunner` or
+`dindRunner`. Rendering fails rather than producing a pod that starts and then
+cannot run a sandbox, so `dind` without `privileged`, `dind` naming a
+`runtimeClassName`, and `sysbox` with `privileged` are each rejected at install
+time.
 
 The chart renders the Docker/sysbox runner image. The Firecracker runner is a
 separate image/entrypoint for external host deployments and is not charted here
@@ -196,7 +250,7 @@ When enabled, the chart renders Kubernetes `NetworkPolicy` resources for the API
 
 - API HTTP remains reachable from all sources by default so an existing ingress controller continues to work. Set `networkPolicy.api.httpIngressFrom` to restrict it to your ingress controller.
 - API registration gRPC is reachable from the in-chart sysbox runner by default. In external data-plane mode it is denied unless peers are added through `networkPolicy.api.grpcIngressFrom`.
-- Runner HTTP/control ports are reachable from the in-chart API by default. Add peers through `networkPolicy.sysboxRunner.ingressFrom` only if another component needs direct runner access.
+- Runner HTTP/control ports are reachable from the in-chart API by default. Add peers through `networkPolicy.runner.ingressFrom` only if another component needs direct runner access.
 
 Example restricting public API traffic to an ingress controller namespace:
 
@@ -222,7 +276,7 @@ monitoring:
       release: kube-prometheus-stack
 ```
 
-This renders one `ServiceMonitor` for the API Service and, when the in-chart sysbox runner is enabled, one for the runner headless Service. It also enables the matching `/metrics` handlers in the API and runner containers. Use `monitoring.serviceMonitor.api.enabled` or `monitoring.serviceMonitor.sysboxRunner.enabled` to disable either scrape target.
+This renders one `ServiceMonitor` for the API Service and, when the in-chart runner is enabled, one for the runner headless Service. It also enables the matching `/metrics` handlers in the API and runner containers. Use `monitoring.serviceMonitor.api.enabled` or `monitoring.serviceMonitor.runner.enabled` to disable either scrape target.
 
 ## Runner Identity
 

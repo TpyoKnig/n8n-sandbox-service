@@ -10,6 +10,7 @@ See [docs/](docs/README.md) for the full documentation, including:
 - [Firecracker runner quickstart](docs/quickstart-firecracker-linux.md) — KVM host + golden-build tarball
 - [macOS quickstart](docs/quickstart-macos.md) — local development with privileged containers
 - [k8s quickstart](docs/quickstart-k8s.md) - production k8s deployment with sysbox-runc
+- [k8s dind quickstart](docs/quickstart-k8s-dind.md) - k8s deployment where sysbox cannot be installed, such as Talos or Flatcar
 - [Configuration reference](docs/configuration.md) — all environment variables
 - [Development guide](docs/development.md) — building, testing, SDK, playground
 - [REST API reference](docs/API.md) — endpoint reference
