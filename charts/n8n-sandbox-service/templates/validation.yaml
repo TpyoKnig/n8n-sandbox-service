@@ -1,16 +1,48 @@
-{{- if not (has .Values.dataPlane.mode (list "sysbox" "external")) -}}
-{{- fail "dataPlane.mode must be one of: sysbox, external" -}}
+{{- if not (has .Values.dataPlane.mode (list "sysbox" "dind" "external")) -}}
+{{- fail "dataPlane.mode must be one of: sysbox, dind, external" -}}
 {{- end -}}
 {{- if not (has .Values.tls.mode (list "existingSecret" "certManager")) -}}
 {{- fail "tls.mode must be one of: existingSecret, certManager" -}}
 {{- end -}}
-{{- if and .Values.sysboxRunner.enabled (eq .Values.dataPlane.mode "sysbox") -}}
-{{- if not (hasSuffix (printf ":%v" .Values.sysboxRunner.service.httpPort) .Values.sysboxRunner.config.listenAddr) -}}
-{{- fail "sysboxRunner.config.listenAddr port must match sysboxRunner.service.httpPort" -}}
+{{- if include "n8n-sandbox-service.runnerEnabled" . -}}
+{{- $runner := fromYaml (include "n8n-sandbox-service.runnerValues" .) -}}
+{{- $mode := .Values.dataPlane.mode -}}
+{{- if not (hasSuffix (printf ":%v" $runner.service.httpPort) $runner.config.listenAddr) -}}
+{{- fail (printf "%sRunner.config.listenAddr port must match %sRunner.service.httpPort" $mode $mode) -}}
 {{- end -}}
-{{- if not (hasSuffix (printf ":%v" .Values.sysboxRunner.service.controlGrpcPort) .Values.sysboxRunner.config.controlGrpcListenAddr) -}}
-{{- fail "sysboxRunner.config.controlGrpcListenAddr port must match sysboxRunner.service.controlGrpcPort" -}}
+{{- if not (hasSuffix (printf ":%v" $runner.service.controlGrpcPort) $runner.config.controlGrpcListenAddr) -}}
+{{- fail (printf "%sRunner.config.controlGrpcListenAddr port must match %sRunner.service.controlGrpcPort" $mode $mode) -}}
 {{- end -}}
+{{- if eq $mode "dind" -}}
+{{/*
+Both of these produce a pod that starts and then fails to run any sandbox, with
+nothing in the runner log naming the configuration as the cause. Fail at render
+time instead.
+*/}}
+{{- if not $runner.runtime.privileged -}}
+{{- fail "dindRunner.runtime.privileged must be true: dind runs the inner Docker daemon under the node runtime, and without it dockerd cannot create the namespaces a sandbox needs" -}}
+{{- end -}}
+{{- if $runner.runtime.runtimeClassName -}}
+{{- fail "dindRunner.runtime.runtimeClassName must be empty in dind mode: naming a RuntimeClass here is what sysbox mode is for, and a cluster without that runtime leaves the pod unschedulable" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $mode "sysbox" -}}
+{{- if $runner.runtime.privileged -}}
+{{- fail "sysboxRunner.runtime.privileged must be false: sysbox supplies the runner's privileges through the node runtime, and setting this grants the container exactly what sysbox is there to withhold" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{/*
+Two keys moved when the runner stopped being sysbox-only. Neither is read any
+more, and both changed behaviour if dropped in silence: a NetworkPolicy would
+quietly lose its extra allowed peers, and a ServiceMonitor explicitly turned off
+would come back on with the new default. Fail with the rename instead.
+*/}}
+{{- if hasKey .Values.networkPolicy "sysboxRunner" -}}
+{{- fail "networkPolicy.sysboxRunner has been renamed to networkPolicy.runner: it now covers the dind runner as well. Rename the key; the fields under it are unchanged." -}}
+{{- end -}}
+{{- if hasKey .Values.monitoring.serviceMonitor "sysboxRunner" -}}
+{{- fail "monitoring.serviceMonitor.sysboxRunner has been renamed to monitoring.serviceMonitor.runner: it now covers the dind runner as well. Rename the key; the fields under it are unchanged." -}}
 {{- end -}}
 {{- if not .Values.auth.existingSecret -}}
 {{- range $key := list "apiKeys" "runnerRegistrationToken" "runnerApiKey" "runnerApiKeys" -}}
