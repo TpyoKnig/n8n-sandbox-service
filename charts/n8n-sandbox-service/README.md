@@ -16,6 +16,28 @@ helm upgrade --install n8n-sandbox-service ./charts/n8n-sandbox-service \
   --create-namespace
 ```
 
+## Upgrading to 0.3.0
+
+Two values keys lost their `sysbox` prefix, because they now cover the dind
+runner as well:
+
+| 0.2.4 | 0.3.0 |
+| --- | --- |
+| `networkPolicy.sysboxRunner.ingressFrom` | `networkPolicy.runner.ingressFrom` |
+| `monitoring.serviceMonitor.sysboxRunner.enabled` | `monitoring.serviceMonitor.runner.enabled` |
+
+The old names are rejected at render time rather than ignored, so an upgrade
+carrying either one fails with the rename instead of quietly changing what the
+chart does: a dropped `ingressFrom` would cost a NetworkPolicy its extra peers,
+and a dropped `enabled: false` would switch a deliberately disabled
+ServiceMonitor back on.
+
+This fires even where the key was inert, for instance with
+`networkPolicy.enabled: false` or `dataPlane.mode: external`. That is
+deliberate. The alternative is deferring the error to whichever later install
+first renders the resource, which surfaces a rename error about a line nobody
+touched in that change. The fix is the same one line either way.
+
 ## Data Plane Mode
 
 | Mode | Runner | Isolation from the node |
