@@ -20,6 +20,14 @@ auth:
     runnerApiKeys: changeme
 
 dataPlane:
+  # sysbox   in-chart runner, isolation from the sysbox-runc node runtime.
+  # dind     in-chart runner, privileged Docker-in-Docker. No node runtime to
+  #          install, which is the only option on an immutable-rootfs distro
+  #          (Talos, Flatcar, CoreOS) where sysbox cannot write containerd's
+  #          config. Weaker isolation: a privileged container can see the node's
+  #          cgroup tree, so it suits a namespace running your own code and not
+  #          a shared or multi-tenant cluster.
+  # external runner runs outside this chart; only the API is deployed.
   mode: sysbox
 
 networkPolicy:
@@ -29,9 +37,9 @@ networkPolicy:
     # When empty, all sources are allowed so an existing ingress controller keeps working.
     httpIngressFrom: []
     # Additional peers allowed to reach the runner registration gRPC port.
-    # The in-chart sysbox runner is allowed automatically when enabled.
+    # The in-chart runner is allowed automatically when enabled.
     grpcIngressFrom: []
-  sysboxRunner:
+  runner:
     # Additional peers allowed to reach runner HTTP/control ports.
     # The in-chart API is allowed automatically.
     ingressFrom: []
@@ -45,7 +53,7 @@ monitoring:
     scheme: http
     api:
       enabled: true
-    sysboxRunner:
+    runner:
       enabled: true
 
 tls:
@@ -173,6 +181,10 @@ sysboxRunner:
       storageClass: ""
       accessModes:
         - ReadWriteOnce
+    # Used only when persistence is disabled and the runtime needs its own
+    # /var/lib/docker, which is the dind case. Sysbox gives the container a
+    # writable one already.
+    emptyDirSizeLimit: 20Gi
 
   service:
     annotations: {}
@@ -182,6 +194,10 @@ sysboxRunner:
   runtime:
     runtimeClassName: sysbox-runc
     hostUsers: false
+    # Must stay false here. Sysbox supplies the runner's privileges through the
+    # node runtime; turning this on would grant the container exactly what
+    # sysbox exists to withhold. Rendering fails if it is set.
+    privileged: false
 
   scheduling:
     nodeSelector:
@@ -191,6 +207,91 @@ sysboxRunner:
       operator: Equal
       value: not-running
       effect: NoSchedule
+    affinity: {}
+
+  config:
+    listenAddr: ":8080"
+    controlGrpcListenAddr: ":9091"
+    dockerHost: unix:///var/run/docker.sock
+    dataDir: /var/sandboxes
+    idleTtlSeconds: "3600"
+    capacityTotal: "1000"
+    maxFileBytes: "10485760"
+    defaultMemoryMb: "512"
+    defaultCpuPercent: "100"
+    defaultPidsMax: "256"
+    defaultDiskQuotaMb: "0"
+    diskQuotaPoolSizeGb: ""
+    diskQuotaPoolPath: ""
+    enableCgroups: "true"
+    dockerStorageDriver: ""
+    dockerInsecureRegistries: ""
+
+  resources: {}
+  podAnnotations: {}
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# Used when dataPlane.mode is dind. Same runner image and the same config
+# surface as sysboxRunner; the two differ only in where the container gets the
+# privileges to run an inner Docker daemon, and in what that costs.
+#
+# The namespace has to permit privileged pods. Pod Security Admission denies
+# them by default, and the rejection surfaces on the StatefulSet rather than as
+# a failing pod, so it reads as nothing happening at all:
+#
+#   kubectl label namespace <ns> pod-security.kubernetes.io/enforce=privileged
+dindRunner:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: n8nio/n8n-sandbox-service-runner-dind
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  sandboxImage:
+    repository: n8nio/n8n-sandbox-service-sandbox
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  dockerConfig:
+    existingSecret: ""
+    configKey: .dockerconfigjson
+    mountPath: /root/.docker
+
+  dockerDataRoot:
+    persistence:
+      enabled: false
+      size: 64Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+    # Inner image layers land here. The default is deliberately not tiny: the
+    # sandbox image alone is most of a gigabyte, and an evicted pod takes every
+    # running sandbox with it.
+    emptyDirSizeLimit: 20Gi
+
+  service:
+    annotations: {}
+    httpPort: 8080
+    controlGrpcPort: 9091
+
+  runtime:
+    # No RuntimeClass: the pod runs under whatever the node already has, which
+    # is the whole point of this mode. Rendering fails if one is named.
+    runtimeClassName: ""
+    hostUsers: null
+    # Required. Without it dockerd cannot create the namespaces a sandbox needs,
+    # and the runner starts cleanly and then fails every sandbox it is asked for.
+    privileged: true
+
+  # No sysbox-install nodeSelector or sysbox-runtime toleration: any node can
+  # run this, which is what makes it work on a cluster that has no such labels.
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
     affinity: {}
 
   config:

@@ -18,7 +18,39 @@ helm upgrade --install n8n-sandbox-service ./charts/n8n-sandbox-service \
 
 ## Data Plane Mode
 
-Use `dataPlane.mode: sysbox` for the in-cluster sysbox/DinD runner. Use `dataPlane.mode: external` when runners live outside Kubernetes. In external mode, the chart renders the API resources but does not render the sysbox runner StatefulSet.
+| Mode | Runner | Isolation from the node |
+| --- | --- | --- |
+| `sysbox` | in-cluster, `runtimeClassName: sysbox-runc` | user-namespaced by the sysbox runtime |
+| `dind` | in-cluster, privileged Docker-in-Docker | container capabilities only |
+| `external` | outside Kubernetes | n/a, only the API is rendered |
+
+Both in-cluster modes run the same runner image and share the whole config, TLS
+and service surface. They differ only in where the container gets the privileges
+to run an inner Docker daemon.
+
+`sysbox` is the default and the stronger of the two. Prefer it wherever the node
+runtime can be changed.
+
+`dind` exists for clusters where it cannot. The sysbox installer writes the
+host's containerd configuration, which an immutable-rootfs distribution such as
+Talos, Flatcar or Fedora CoreOS does not permit, so on those `sysbox` is not
+merely inconvenient but unavailable. The trade is worth stating plainly: a
+privileged container can see the node's cgroup tree, so `dind` suits a namespace
+running code you own and does not suit a shared or multi-tenant cluster.
+
+In `dind` mode the namespace must permit privileged pods. Pod Security Admission
+denies them by default, and the rejection appears as an event on the StatefulSet
+rather than as a failing pod, so the symptom is that no runner is ever created:
+
+```bash
+kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=privileged
+```
+
+Configure the active mode through its own values block, `sysboxRunner` or
+`dindRunner`. Rendering fails rather than producing a pod that starts and then
+cannot run a sandbox, so `dind` without `privileged`, `dind` naming a
+`runtimeClassName`, and `sysbox` with `privileged` are each rejected at install
+time.
 
 The chart renders the Docker/sysbox runner image. The Firecracker runner is a
 separate image/entrypoint for external host deployments and is not charted here
