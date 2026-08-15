@@ -48,6 +48,15 @@ kubectl create namespace n8n-sandbox
 kubectl label namespace n8n-sandbox pod-security.kubernetes.io/enforce=privileged
 ```
 
+`enforce` is the label that matters. If your cluster also sets `warn` and
+`audit` to `restricted`, every install prints a paragraph of PodSecurity
+warnings about the runner's `privileged: true`. They are advisory and the
+install proceeds. Set all three to keep the output readable:
+
+```bash
+kubectl label namespace n8n-sandbox   pod-security.kubernetes.io/warn=privileged   pod-security.kubernetes.io/audit=privileged
+```
+
 ## 2. Create the auth Secret
 
 The chart reads four keys from one Secret. `runner-api-key` and
@@ -162,6 +171,23 @@ kubectl -n n8n-sandbox exec deploy/$API -- \
 The second call streams NDJSON ending in an `exit` event with
 `"success":true`.
 
+## Verified on
+
+This path was installed and exercised end to end on:
+
+| | |
+| --- | --- |
+| Distribution | Talos Linux v1.13.7, kernel `6.18.39-talos` |
+| Kubernetes | v1.36.3, containerd 2.2.6 |
+| Chart | `n8n-sandbox-service` 0.3.0, `dataPlane.mode: dind` |
+| TLS | `tls.mode: certManager`, self-signed CA per the step above |
+
+The runner registered over mTLS and reported capacity, and a sandbox created
+through `POST /sandboxes` executed Python and shell, returning `exit_code: 0`.
+`uname -r` inside the sandbox reported the Talos kernel, which is the point:
+the inner Docker daemon is running on a host where sysbox cannot be installed
+at all.
+
 ## Storage
 
 The inner Docker daemon writes image layers to `/var/lib/docker`. Sysbox gives
@@ -182,6 +208,12 @@ with `kubectl -n n8n-sandbox get pod <runner> -o jsonpath='{.spec.containers[0].
 
 **Runner pod stays `Pending`.** Usually a leftover sysbox `nodeSelector` or
 toleration. `dindRunner.scheduling` defaults to empty for exactly this reason.
+
+**`operation not permitted` dialing the API, in the runner log at startup.**
+Expected, and it clears itself. The runner comes up before its inner Docker
+daemon has finished setting up networking, so the first registration attempts
+fail and back off. Registration succeeded on the third try in testing, about 12
+seconds in. Only worry if `runner registered` never appears in the API log.
 
 **Pods stuck in `ContainerCreating`.** Almost always a missing Secret, because
 the kubelet blocks on the volume rather than reporting a config error. Check

@@ -60,6 +60,9 @@ merely inconvenient but unavailable. The trade is worth stating plainly: a
 privileged container can see the node's cgroup tree, so `dind` suits a namespace
 running code you own and does not suit a shared or multi-tenant cluster.
 
+`dind` is verified end to end on Talos Linux v1.13.7 / Kubernetes v1.36.3, the
+case it exists for: see [quickstart-k8s-dind.md](../../docs/quickstart-k8s-dind.md).
+
 In `dind` mode the namespace must permit privileged pods. Pod Security Admission
 denies them by default, and the rejection appears as an event on the StatefulSet
 rather than as a failing pod, so the symptom is that no runner is ever created:
