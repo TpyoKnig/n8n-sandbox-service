@@ -75,7 +75,16 @@ kubectl -n n8n-sandbox logs deploy/n8n-sandbox-n8n-sandbox-service-api | grep 'r
 
 A registered runner reports its capacity. Then confirm a sandbox actually runs,
 which is the check that distinguishes a runner that started from a runner that
-works:
+works.
+
+`KEY` is one of the API keys the service accepts, the same credential a client
+such as n8n presents. It lives under the `api-keys` key of the auth Secret,
+named by `auth.secretKeys.apiKeys`, and holds a comma-separated list. Read it
+back rather than retyping it:
+
+```bash
+KEY=$(kubectl -n n8n-sandbox get secret sandbox-auth -o jsonpath='{.data.api-keys}' | base64 -d | cut -d, -f1)
+```
 
 ```bash
 API=n8n-sandbox-n8n-sandbox-service-api
