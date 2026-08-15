@@ -1,29 +1,31 @@
-{{- if and .Values.sysboxRunner.enabled (eq .Values.dataPlane.mode "sysbox") }}
+{{- if include "n8n-sandbox-service.runnerEnabled" . }}
+{{- $runner := fromYaml (include "n8n-sandbox-service.runnerValues" .) -}}
+{{- $component := include "n8n-sandbox-service.runnerComponent" . -}}
 {{- $runnerRegistration := .Values.tls.certificates.runnerRegistrationClient -}}
 {{- $runnerControl := .Values.tls.certificates.runnerControlServer -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "n8n-sandbox-service.sysboxRunnerName" . }}
+  name: {{ include "n8n-sandbox-service.runnerName" . }}
   labels:
     {{- include "n8n-sandbox-service.labels" . | nindent 4 }}
-    app.kubernetes.io/component: sysbox-runner
+    app.kubernetes.io/component: {{ $component }}
 spec:
-  serviceName: {{ include "n8n-sandbox-service.sysboxRunnerName" . }}
-  replicas: {{ .Values.sysboxRunner.replicaCount }}
+  serviceName: {{ include "n8n-sandbox-service.runnerName" . }}
+  replicas: {{ $runner.replicaCount }}
   selector:
     matchLabels:
-      {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" .Release "Chart" .Chart "Values" .Values "component" "sysbox-runner") | nindent 6 }}
+      {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" .Release "Chart" .Chart "Values" .Values "component" $component) | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" .Release "Chart" .Chart "Values" .Values "component" "sysbox-runner") | nindent 8 }}
-      {{- if or .Values.podAnnotations .Values.sysboxRunner.podAnnotations }}
+        {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" .Release "Chart" .Chart "Values" .Values "component" $component) | nindent 8 }}
+      {{- if or .Values.podAnnotations $runner.podAnnotations }}
       annotations:
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- with .Values.sysboxRunner.podAnnotations }}
+        {{- with $runner.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
@@ -32,24 +34,33 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.sysboxRunner.runtime.runtimeClassName }}
-      runtimeClassName: {{ .Values.sysboxRunner.runtime.runtimeClassName | quote }}
+      {{- if $runner.runtime.runtimeClassName }}
+      runtimeClassName: {{ $runner.runtime.runtimeClassName | quote }}
       {{- end }}
-      {{- if kindIs "bool" .Values.sysboxRunner.runtime.hostUsers }}
-      hostUsers: {{ .Values.sysboxRunner.runtime.hostUsers }}
+      {{- if kindIs "bool" $runner.runtime.hostUsers }}
+      hostUsers: {{ $runner.runtime.hostUsers }}
       {{- end }}
       containers:
         - name: runner
-          image: "{{ .Values.sysboxRunner.image.repository }}:{{ .Values.sysboxRunner.image.tag }}"
-          imagePullPolicy: {{ .Values.sysboxRunner.image.pullPolicy }}
+          image: "{{ $runner.image.repository }}:{{ $runner.image.tag }}"
+          imagePullPolicy: {{ $runner.image.pullPolicy }}
+          {{- if $runner.runtime.privileged }}
+          securityContext:
+            # dind runs the inner Docker daemon under the node's own runtime, so
+            # the kernel capabilities have to come from here. Under sysbox they
+            # come from the runtime instead and this stays false: setting both
+            # would hand the container the very privileges sysbox exists to
+            # withhold.
+            privileged: true
+          {{- end }}
           ports:
             - name: http
-              containerPort: {{ .Values.sysboxRunner.service.httpPort }}
+              containerPort: {{ $runner.service.httpPort }}
             - name: control-grpc
-              containerPort: {{ .Values.sysboxRunner.service.controlGrpcPort }}
+              containerPort: {{ $runner.service.controlGrpcPort }}
           envFrom:
             - configMapRef:
-                name: {{ include "n8n-sandbox-service.sysboxRunnerName" . }}-config
+                name: {{ include "n8n-sandbox-service.runnerName" . }}-config
           env:
             - name: POD_NAME
               valueFrom:
@@ -64,9 +75,9 @@ spec:
             - name: SANDBOX_RUNNER_API_GRPC_ADDR
               value: "{{ include "n8n-sandbox-service.apiName" . }}:{{ .Values.api.service.grpcPort }}"
             - name: SANDBOX_RUNNER_HTTP_BASE_URL
-              value: "http://$(POD_NAME).{{ include "n8n-sandbox-service.sysboxRunnerName" . }}.$(POD_NAMESPACE).svc.cluster.local:{{ .Values.sysboxRunner.service.httpPort }}"
+              value: "http://$(POD_NAME).{{ include "n8n-sandbox-service.runnerName" . }}.$(POD_NAMESPACE).svc.cluster.local:{{ $runner.service.httpPort }}"
             - name: SANDBOX_RUNNER_CONTROL_GRPC_ADVERTISE_ADDR
-              value: "$(POD_NAME).{{ include "n8n-sandbox-service.sysboxRunnerName" . }}.$(POD_NAMESPACE).svc.cluster.local:{{ .Values.sysboxRunner.service.controlGrpcPort }}"
+              value: "$(POD_NAME).{{ include "n8n-sandbox-service.runnerName" . }}.$(POD_NAMESPACE).svc.cluster.local:{{ $runner.service.controlGrpcPort }}"
             - name: SANDBOX_RUNNER_API_KEYS
               valueFrom:
                 secretKeyRef:
@@ -93,7 +104,7 @@ spec:
               value: {{ printf "%s/%s" $runnerControl.mountPath $runnerControl.keyFileKey | quote }}
             - name: SANDBOX_RUNNER_CONTROL_GRPC_TLS_CLIENT_CA_FILE
               value: {{ printf "%s/%s" $runnerControl.mountPath $runnerControl.caFileKey | quote }}
-            {{- with .Values.sysboxRunner.extraEnv }}
+            {{- with $runner.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           startupProbe:
@@ -121,42 +132,47 @@ spec:
             - name: runner-control-tls
               mountPath: {{ $runnerControl.mountPath | quote }}
               readOnly: true
-            {{- if .Values.sysboxRunner.dockerConfig.existingSecret }}
+            {{- if $runner.dockerConfig.existingSecret }}
             - name: docker-config
-              mountPath: {{ printf "%s/config.json" .Values.sysboxRunner.dockerConfig.mountPath | quote }}
+              mountPath: {{ printf "%s/config.json" $runner.dockerConfig.mountPath | quote }}
               subPath: config.json
               readOnly: true
             {{- end }}
-            {{- if .Values.sysboxRunner.dockerDataRoot.persistence.enabled }}
+            {{- if or $runner.dockerDataRoot.persistence.enabled $runner.runtime.privileged }}
             - name: docker-data
               mountPath: /var/lib/docker
             {{- end }}
-            {{- with .Values.sysboxRunner.extraVolumeMounts }}
+            {{- with $runner.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.sysboxRunner.resources }}
+          {{- with $runner.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
       volumes:
+        {{- if and $runner.runtime.privileged (not $runner.dockerDataRoot.persistence.enabled) }}
+        - name: docker-data
+          emptyDir:
+            sizeLimit: {{ $runner.dockerDataRoot.emptyDirSizeLimit | quote }}
+        {{- end }}
         - name: runner-registration-tls
           secret:
             secretName: {{ $runnerRegistration.secretName }}
         - name: runner-control-tls
           secret:
             secretName: {{ $runnerControl.secretName }}
-        {{- if .Values.sysboxRunner.dockerConfig.existingSecret }}
+        {{- if $runner.dockerConfig.existingSecret }}
         - name: docker-config
           secret:
-            secretName: {{ .Values.sysboxRunner.dockerConfig.existingSecret }}
+            secretName: {{ $runner.dockerConfig.existingSecret }}
             items:
-              - key: {{ .Values.sysboxRunner.dockerConfig.configKey }}
+              - key: {{ $runner.dockerConfig.configKey }}
                 path: config.json
         {{- end }}
-        {{- with .Values.sysboxRunner.extraVolumes }}
+        {{- with $runner.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.sysboxRunner.scheduling.nodeSelector }}
+      {{- with $runner.scheduling.nodeSelector }}
       nodeSelector:
         {{- range $key, $value := . }}
         {{- if ne $value nil }}
@@ -164,13 +180,13 @@ spec:
         {{- end }}
         {{- end }}
       {{- end }}
-      {{- with .Values.sysboxRunner.scheduling.affinity }}
+      {{- with $runner.scheduling.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $topologySpreadConstraints := list (dict "maxSkew" 1 "topologyKey" "kubernetes.io/hostname" "whenUnsatisfiable" "ScheduleAnyway") }}
-      {{- if hasKey .Values.sysboxRunner.scheduling "topologySpreadConstraints" }}
-      {{- $topologySpreadConstraints = .Values.sysboxRunner.scheduling.topologySpreadConstraints }}
+      {{- if hasKey $runner.scheduling "topologySpreadConstraints" }}
+      {{- $topologySpreadConstraints = $runner.scheduling.topologySpreadConstraints }}
       {{- end }}
       {{- with $topologySpreadConstraints }}
       topologySpreadConstraints:
@@ -181,26 +197,26 @@ spec:
             {{- toYaml .labelSelector | nindent 12 }}
             {{- else }}
             matchLabels:
-              {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" $.Release "Chart" $.Chart "Values" $.Values "component" "sysbox-runner") | nindent 14 }}
+              {{- include "n8n-sandbox-service.selectorLabels" (dict "Release" $.Release "Chart" $.Chart "Values" $.Values "component" $component) | nindent 14 }}
             {{- end }}
         {{- end }}
       {{- end }}
-      {{- with .Values.sysboxRunner.scheduling.tolerations }}
+      {{- with $runner.scheduling.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.sysboxRunner.dockerDataRoot.persistence.enabled }}
+  {{- if $runner.dockerDataRoot.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
         name: docker-data
       spec:
         accessModes:
-          {{- toYaml .Values.sysboxRunner.dockerDataRoot.persistence.accessModes | nindent 10 }}
-        {{- if .Values.sysboxRunner.dockerDataRoot.persistence.storageClass }}
-        storageClassName: {{ .Values.sysboxRunner.dockerDataRoot.persistence.storageClass | quote }}
+          {{- toYaml $runner.dockerDataRoot.persistence.accessModes | nindent 10 }}
+        {{- if $runner.dockerDataRoot.persistence.storageClass }}
+        storageClassName: {{ $runner.dockerDataRoot.persistence.storageClass | quote }}
         {{- end }}
         resources:
           requests:
-            storage: {{ .Values.sysboxRunner.dockerDataRoot.persistence.size | quote }}
+            storage: {{ $runner.dockerDataRoot.persistence.size | quote }}
   {{- end }}
 {{- end }}
