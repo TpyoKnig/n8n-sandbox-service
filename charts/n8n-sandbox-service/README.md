@@ -228,7 +228,7 @@ When enabled, the chart renders Kubernetes `NetworkPolicy` resources for the API
 
 - API HTTP remains reachable from all sources by default so an existing ingress controller continues to work. Set `networkPolicy.api.httpIngressFrom` to restrict it to your ingress controller.
 - API registration gRPC is reachable from the in-chart sysbox runner by default. In external data-plane mode it is denied unless peers are added through `networkPolicy.api.grpcIngressFrom`.
-- Runner HTTP/control ports are reachable from the in-chart API by default. Add peers through `networkPolicy.sysboxRunner.ingressFrom` only if another component needs direct runner access.
+- Runner HTTP/control ports are reachable from the in-chart API by default. Add peers through `networkPolicy.runner.ingressFrom` only if another component needs direct runner access.
 
 Example restricting public API traffic to an ingress controller namespace:
 
@@ -254,7 +254,7 @@ monitoring:
       release: kube-prometheus-stack
 ```
 
-This renders one `ServiceMonitor` for the API Service and, when the in-chart sysbox runner is enabled, one for the runner headless Service. It also enables the matching `/metrics` handlers in the API and runner containers. Use `monitoring.serviceMonitor.api.enabled` or `monitoring.serviceMonitor.sysboxRunner.enabled` to disable either scrape target.
+This renders one `ServiceMonitor` for the API Service and, when the in-chart runner is enabled, one for the runner headless Service. It also enables the matching `/metrics` handlers in the API and runner containers. Use `monitoring.serviceMonitor.api.enabled` or `monitoring.serviceMonitor.runner.enabled` to disable either scrape target.
 
 ## Runner Identity
 
