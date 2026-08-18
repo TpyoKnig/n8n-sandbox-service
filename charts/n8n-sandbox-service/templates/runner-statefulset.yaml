@@ -42,7 +42,7 @@ spec:
       {{- end }}
       containers:
         - name: runner
-          image: "{{ $runner.image.repository }}:{{ $runner.image.tag }}"
+          image: "{{ $runner.image.repository }}:{{ $runner.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ $runner.image.pullPolicy }}
           {{- if $runner.runtime.privileged }}
           securityContext:

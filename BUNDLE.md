@@ -12,8 +12,7 @@ under `vm-images/firecracker-sandbox-runner/`.
 
 | Artifact | Registry | When | Images |
 | --- | --- | --- | --- |
-| Versioned service release | [Docker Hub](https://hub.docker.com/u/n8nio) | Merge `service/release/*` PR | `n8nio/n8n-sandbox-service-api`, `n8nio/n8n-sandbox-service-runner-dind`, `n8nio/n8n-sandbox-service-runner-firecracker` (amd64) |
-| Versioned sandbox release | Docker Hub | Merge `sandbox/release/*` PR | `n8nio/n8n-sandbox-service-sandbox` |
+| Versioned release | [Docker Hub](https://hub.docker.com/u/n8nio) | Merge `service/release/*` PR | `n8nio/n8n-sandbox-service-api`, `n8nio/n8n-sandbox-service-runner-dind`, `n8nio/n8n-sandbox-service-runner-firecracker` (amd64), `n8nio/n8n-sandbox-service-sandbox` — all at the same version |
 | Alpha (every push to `main`) | Private ACR | `release-alpha` workflow | `api`, `runner-dind`, `runner-firecracker`, `sandbox` (`:alpha`, `:<full_sha>`) |
 | Staging candidates | Private ACR | Publish Service Staging workflow | Same four images (`:<version>-staging.<sha>`, `:<full_sha>`) |
 | Golden build scripts | GitHub Release asset | Service release / staging | `firecracker-golden-build-{version}.tar.gz` (`bin/sandbox-daemon` + host/snapshot scripts) |
@@ -47,7 +46,7 @@ Infra repo owns (not in the bundle):
 - Runner subnet / NAT Gateway / NSG / NIC IP forwarding
 - Pulling `runner-firecracker` from ACR for n8n staging (or building gallery images)
 
-## Bundle layout (schema v2)
+## Bundle layout (schema v3)
 
 ```text
 firecracker-golden-build/
@@ -63,6 +62,19 @@ firecracker-golden-build/
   bin/
     sandbox-daemon
 ```
+
+### Versions (`MANIFEST.json`)
+
+| Key | Meaning |
+| --- | --- |
+| `version` | Release version of the tree the bundle was built from (the `VERSION` file). On a service release this is the tag all four images carry. |
+| `bundle_version` | Label of this tarball. Equals `version` on a service release; on a staging prerelease it is the staging label (`{version}-staging.{sha}`). |
+| `git_sha` | Commit the bundle was built from. This, not `version`, is the pin to correlate with a container image's full-SHA tag. |
+| `sandbox_image.ref` | Authoritative pin for the guest rootfs. Staging pins the ACR commit-SHA tag, so it does not carry the release version. |
+
+Staging bundles are the case to be careful with: nothing is published at `version`
+during a staging run, so use `bundle_version`, `git_sha`, and `sandbox_image.ref`
+to identify what that candidate actually contains.
 
 ### Entrypoints (`MANIFEST.json`)
 
@@ -98,7 +110,7 @@ Inputs (flags or env):
 Must seed `/etc/resolv.conf` (remove image symlink first; write `8.8.8.8` / `1.1.1.1`).
 
 Guest userspace comes from the sandbox image pinned in `MANIFEST.json`
-(`sandbox_image.ref`, from `SANDBOX_VERSION`). Snapshot create still injects the
+(`sandbox_image.ref`, from `VERSION`). Snapshot create still injects the
 service bundle's `bin/sandbox-daemon` as `/sandbox-daemon` (PID 1). After the
 staged tree is normalized to `root:root`, `/home/user` is restored to `1000:1000`
 so the daemon (which drops privileges) can write the workspace.
@@ -129,7 +141,7 @@ on a runner VM.
 Package locally:
 
 ```sh
-./scripts/package-firecracker-golden-build.sh --version "$(tr -d '[:space:]' < SERVICE_VERSION)"
+./scripts/package-firecracker-golden-build.sh --version "$(tr -d '[:space:]' < VERSION)"
 ```
 
 CI runs `scripts/test-firecracker-golden-build-bundle.sh` (rootfs build, resolv.conf

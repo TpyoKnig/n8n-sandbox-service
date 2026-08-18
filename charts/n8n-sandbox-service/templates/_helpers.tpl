@@ -105,5 +105,5 @@ app.kubernetes.io/component: {{ .component }}
 
 {{- define "n8n-sandbox-service.sandboxImage" -}}
 {{- $runner := fromYaml (include "n8n-sandbox-service.runnerValues" .) -}}
-{{- printf "%s:%s" $runner.sandboxImage.repository $runner.sandboxImage.tag }}
+{{- printf "%s:%s" $runner.sandboxImage.repository ($runner.sandboxImage.tag | default .Chart.AppVersion) }}
 {{- end }}

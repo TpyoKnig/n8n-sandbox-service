@@ -3,4 +3,9 @@ name: n8n-sandbox-service
 description: n8n Sandbox Service control plane with an optional in-cluster runner (sysbox or privileged dind)
 type: application
 version: "0.3.0"
-appVersion: "0.1.0"
+# The single release version shared by the API, runner, and sandbox images. Image
+# tags default to it, so this is the set that is supported together.
+# It intentionally lags VERSION until the first unified release, because the
+# sandbox image was never published at the versions after this one — see the
+# migration note in docs/RELEASE.md.
+appVersion: "1.1.0"
