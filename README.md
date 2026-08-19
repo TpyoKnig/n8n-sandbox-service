@@ -1,3 +1,34 @@
+> [!IMPORTANT]
+> **Archived. Use the upstream chart, not this fork.**
+>
+> This fork existed for one reason: the chart hard-required `runtimeClassName: sysbox-runc`,
+> and sysbox installs by writing the host's containerd config, which an immutable rootfs like
+> Talos does not allow. So there was no in-cluster data plane on those distributions, and I
+> added a `dataPlane.mode: dind` to get one.
+>
+> Upstream has since built it properly.
+> [n8n-io/n8n-sandbox-service#126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)
+> adds `runner.isolation: privileged` in chart 0.4.0, closing
+> [#122](https://github.com/n8n-io/n8n-sandbox-service/issues/122). It separates *where* the
+> runner lives from *how* it gets privilege, gates the privileged path behind an explicit
+> acknowledgement, and leaves room for Kata. That is a better seam than the one I proposed.
+>
+> I validated #126 end to end on a 5 node Talos cluster on 2026-08-19, including driving the
+> n8n AI Assistant through it to generate and run a workflow. **Once it merges, take the
+> official release.** Until then run the PR branch, not this fork.
+>
+> Migrating off this fork:
+>
+> | This fork (0.3.0) | Upstream (0.4.0) |
+> | --- | --- |
+> | `dataPlane.mode: dind` | `dataPlane.mode: in-cluster` + `runner.isolation: privileged` |
+> | (none) | `runner.acknowledgePrivileged: true`, required |
+> | `dindRunner.*` | `runner.*` and `runner.privileged.*` |
+> | `sysboxRunner.*` | `runner.*` and `runner.sysbox.*` |
+>
+> Upstream fails the render on the old keys and names the replacement, so you will not
+> silently get the wrong thing.
+
 # n8n Sandbox Service
 
 The n8n Sandbox Service provides isolated execution environments via a REST API. Each sandbox is a Debian-based Docker container managed by an in-container Docker daemon, with a per-sandbox HTTP daemon that handles exec and file operations.
